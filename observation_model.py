@@ -5,17 +5,27 @@ import numpy as np
 import pexpect
 from pexpect import TIMEOUT, EOF
 
+kaldi_dir = None
+nnetdir = "/group/teaching/asr/labs/tdnnf_mono_net/"
+bindir = "/group/teaching/asr/labs/bin/"
+if not kaldi_dir:
+    path = ['/group/teaching/asr/labs/bin/lib/',
+            '/opt/intel/compilers_and_libraries_2019.5.281/linux/mkl/lib/intel64_lin/']
+    path = ':'.join(path)
+else:
+    path = '{kd}/tools/openfst-1.6.5/lib/'.format(kd=kaldi_dir)
+            
 def initialize_nn(debug=False):
-    nnet = pexpect.spawnu("{}/lab-chain-compute-post".format(self.bindir),
+    nnet = pexpect.spawnu("{}/lab-chain-compute-post".format(bindir),
                           ["--feature-type=fbank",
                            "--frame-subsampling-factor=1",
                            "--frames-per-chunk=150",
-                           "--cmvn-config={}/conf/cmvn.conf".format(self.nnetdir),
-                           "--fbank-config={}/conf/fbank.conf".format(self.nnetdir),
-                           "--global-cmvn-stats={}/conf/cmvn.gstat".format(self.nnetdir),
-                           "{}/final.mdl".format(self.nnetdir),
-                           "{}/den.fst".format(self.nnetdir),
-                           "scp:-", "ark,t:-"], env={'LD_LIBRARY_PATH': self.path})
+                           "--cmvn-config={}/conf/cmvn.conf".format(nnetdir),
+                           "--fbank-config={}/conf/fbank.conf".format(nnetdir),
+                           "--global-cmvn-stats={}/conf/cmvn.gstat".format(nnetdir),
+                           "{}/final.mdl".format(nnetdir),
+                           "{}/den.fst".format(nnetdir),
+                           "scp:-", "ark,t:-"], env={'LD_LIBRARY_PATH': path})
     try:
         nnet.expect("Ready.")
     except (TIMEOUT, EOF):
