@@ -33,25 +33,24 @@ def initialize_nn(debug=False):
     return nnet
 
 
-def nn_check_for_errors(debug=False):
+def nn_check_for_errors(nnet, debug=False):
     if debug is True:
         import pdb
         pdb.set_trace()
-    before = self.nnet.before if type(self.nnet.before) == str else ''
-    after = self.nnet.after if type(self.nnet.after) == str else ''
+    before = nnet.before if type(nnet.before) == str else ''
+    after = nnet.after if type(nnet.after) == str else ''
     stdout = (before + '\r\n' + after).split('\r\n')
     err = [x for x in stdout if x.startswith('WARNING') or x.startswith('ERR')]
     raise Exception('\n'.join(err))
 
 
 nnet = initialize_nn()
-
+loaded_first_rec = False
 
 class ObservationModel:
     def __init__(self, debug=False, kaldi_dir=None):
         self.debug = debug
         self.timesteps = 0
-        self.loaded = False
         self.dummy = False
         self.nnetdir = "/group/teaching/asr/labs/tdnnf_mono_net/"
         self.bindir = "/group/teaching/asr/labs/bin/"
@@ -75,6 +74,7 @@ class ObservationModel:
         return state_map
 
     def load_audio(self, wav_fn):
+        global loaded_first_rec
         if wav_fn[-3:] != 'wav':
             raise ValueError('Audio must be in wav format')
         if not (os.path.exists(wav_fn) and os.path.isfile(wav_fn)):
@@ -85,18 +85,18 @@ class ObservationModel:
             self.dummy = False
 
         if not self.nnet or not self.nnet.isalive():
-            self.initialize_nn(self.debug)
-        if self.loaded:  # not first load data
+            self.nnet = initialize_nn(self.debug)
+        if loaded_first_rec:  # not first load data
             self.nnet.expect('LOG') # there's a previous line giving logprob over frames
 
         self.nnet.send("{} {}\n".format(utt_name, wav_fn))
         try:
             self.nnet.expect('LOG')
         except (TIMEOUT, EOF):
-            nn_check_for_errors(self.debug)
+            nn_check_for_errors(self.nnet, self.debug)
         self.post_mat = self.parse_kaldi_post_mat(self.nnet.before)
         self.timesteps = len(self.post_mat)
-        self.loaded = True
+        loaded_first_rec = True
 
     def parse_kaldi_post_mat(self, mat_str):
         mat_str = mat_str.split('\r\n')
@@ -125,6 +125,7 @@ class ObservationModel:
         if rows:
             mat = np.vstack(rows)
         else:
+            nn_check_for_errors(self.nnet, self.debug)
             raise Exception("Something is wrong, matrix is empty.")
         open_mat = False
         close_mat = True
@@ -193,9 +194,3 @@ class ObservationModel:
             p[k] = p[k]/scale
 
         return np.log(p[hmm_label])
-
-    def __del__(self):
-        if self.nnet is not None:
-            self.nnet.terminate()
-            self.nnet.wait()
-            self.nnet.close()
