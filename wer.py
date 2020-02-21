@@ -15,6 +15,12 @@ def compute_alignment_errors(a, b):
     
     M = len(a)
     N = len(b)
+
+    if M == 0:
+        return (0, 0, N)
+
+    if N == 0:
+        return (0, M, 0)
     
     e = [[0]*(N+1) for i in range(M+1)]
 
