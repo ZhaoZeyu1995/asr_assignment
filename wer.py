@@ -50,11 +50,11 @@ def compute_alignment_errors(a, b):
         if m==0:
             last_m = m
             last_n = n-1
-
+            nins+=1
         elif n==0:
             last_m = m-1
             last_n = n
-
+            ndel+=1
         else:
 
             if a[m-1] != b[n-1]:
