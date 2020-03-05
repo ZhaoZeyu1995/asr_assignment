@@ -5,17 +5,63 @@ import numpy as np
 import pexpect
 from pexpect import TIMEOUT, EOF
 
+kaldi_dir = None
+nnetdir = "/group/teaching/asr/labs/tdnnf_mono_net/"
+bindir = "/group/teaching/asr/labs/bin/"
+if not kaldi_dir:
+    path = ['/group/teaching/asr/labs/bin/lib/',
+            '/opt/intel/compilers_and_libraries_2019.5.281/linux/mkl/lib/intel64_lin/']
+    path = ':'.join(path)
+else:
+    path = '{kd}/tools/openfst-1.6.5/lib/'.format(kd=kaldi_dir)
+            
+def initialize_nn(debug=False):
+    nnet = pexpect.spawnu("{}/lab-chain-compute-post".format(bindir),
+                          ["--feature-type=fbank",
+                           "--frame-subsampling-factor=1",
+                           "--frames-per-chunk=150",
+                           "--cmvn-config={}/conf/cmvn.conf".format(nnetdir),
+                           "--fbank-config={}/conf/fbank.conf".format(nnetdir),
+                           "--global-cmvn-stats={}/conf/cmvn.gstat".format(nnetdir),
+                           "{}/final.mdl".format(nnetdir),
+                           "{}/den.fst".format(nnetdir),
+                           "scp:-", "ark,t:-"], env={'LD_LIBRARY_PATH': path})
+    try:
+        nnet.expect("Ready.")
+    except (TIMEOUT, EOF):
+        nn_check_for_errors(debug)
+    return nnet
+
+
+def nn_check_for_errors(nnet, debug=False):
+    if debug is True:
+        import pdb
+        pdb.set_trace()
+    before = nnet.before if type(nnet.before) == str else ''
+    after = nnet.after if type(nnet.after) == str else ''
+    stdout = (before + '\r\n' + after).split('\r\n')
+    err = [x for x in stdout if x.startswith('WARNING') or x.startswith('ERR')]
+    raise Exception('\n'.join(err))
+
+
+nnet = initialize_nn()
+loaded_first_rec = False
 
 class ObservationModel:
-    def __init__(self, debug=False):
+    def __init__(self, debug=False, kaldi_dir=None):
         self.debug = debug
         self.timesteps = 0
-        self.loaded = False
         self.dummy = False
         self.nnetdir = "/group/teaching/asr/labs/tdnnf_mono_net/"
         self.bindir = "/group/teaching/asr/labs/bin/"
-        self.nnet = None
+        self.nnet = nnet
         self.state_map = self.load_state_map("{}/conf/pdfsmap".format(self.nnetdir))
+        if not kaldi_dir:
+            path = ['/group/teaching/asr/labs/bin/lib/',
+                    '/opt/intel/compilers_and_libraries_2019.5.281/linux/mkl/lib/intel64_lin/']
+            self.path = ':'.join(path)
+        else:
+            self.path = '{kd}/tools/openfst-1.6.5/lib/'.format(kd=kaldi_dir)
 
     def load_state_map(self, map_fn):
         state_map = {}
@@ -27,33 +73,8 @@ class ObservationModel:
                 state_map[state] = pdf
         return state_map
 
-    def initialize_nn(self):
-        self.nnet = pexpect.spawnu("{}/lab-chain-compute-post".format(self.bindir),
-                              ["--feature-type=fbank",
-                               "--frame-subsampling-factor=1",
-                               "--frames-per-chunk=150",
-                               "--cmvn-config={}/conf/cmvn.conf".format(self.nnetdir),
-                               "--fbank-config={}/conf/fbank.conf".format(self.nnetdir),
-                               "--global-cmvn-stats={}/conf/cmvn.gstat".format(self.nnetdir),
-                               "{}/final.mdl".format(self.nnetdir),
-                               "{}/den.fst".format(self.nnetdir),
-                               "scp:-", "ark,t:-"])
-        try:
-            self.nnet.expect("Ready.")
-        except (TIMEOUT, EOF):
-            self.nn_check_for_errors()
-
-    def nn_check_for_errors(self):
-        if self.debug is True:
-            import pdb
-            pdb.set_trace()
-        before = self.nnet.before if type(self.nnet.before) == str else ''
-        after = self.nnet.after if type(self.nnet.after) == str else ''
-        stdout = (before + '\r\n' + after).split('\r\n')
-        err = [x for x in stdout if x.startswith('WARNING') or x.startswith('ERR')]
-        raise Exception('\n'.join(err))
-
     def load_audio(self, wav_fn):
+        global loaded_first_rec
         if wav_fn[-3:] != 'wav':
             raise ValueError('Audio must be in wav format')
         if not (os.path.exists(wav_fn) and os.path.isfile(wav_fn)):
@@ -64,18 +85,18 @@ class ObservationModel:
             self.dummy = False
 
         if not self.nnet or not self.nnet.isalive():
-            self.initialize_nn()
-        if self.loaded:  # not first load data
+            self.nnet = initialize_nn(self.debug)
+        if loaded_first_rec:  # not first load data
             self.nnet.expect('LOG') # there's a previous line giving logprob over frames
 
         self.nnet.send("{} {}\n".format(utt_name, wav_fn))
         try:
             self.nnet.expect('LOG')
         except (TIMEOUT, EOF):
-            self.nn_check_for_errors()
+            nn_check_for_errors(self.nnet, self.debug)
         self.post_mat = self.parse_kaldi_post_mat(self.nnet.before)
         self.timesteps = len(self.post_mat)
-        self.loaded = True
+        loaded_first_rec = True
 
     def parse_kaldi_post_mat(self, mat_str):
         mat_str = mat_str.split('\r\n')
@@ -104,6 +125,7 @@ class ObservationModel:
         if rows:
             mat = np.vstack(rows)
         else:
+            nn_check_for_errors(self.nnet, self.debug)
             raise Exception("Something is wrong, matrix is empty.")
         open_mat = False
         close_mat = True
@@ -172,9 +194,3 @@ class ObservationModel:
             p[k] = p[k]/scale
 
         return np.log(p[hmm_label])
-
-    def __del__(self):
-        if self.nnet is not None:
-            self.nnet.terminate()
-            self.nnet.wait()
-            self.nnet.close()
