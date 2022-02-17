@@ -1,2 +1,1 @@
-# asr_assignment
-ASR assignment
+# Automatic Speech Recognition Assignment 2022
