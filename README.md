@@ -11,7 +11,7 @@ Additional resources not in this repository:
 
 You can follow the same setup as for the labs, https://github.com/ZhaoZeyu1995/asr_labs
 
-You will need to clone this repository and open the notebook using
+You can clone this repository and open the notebook with the following commands:
 
 ```shell
 git clone https://github.com/ZhaoZeyu1995/asr_assignment.git
@@ -20,7 +20,7 @@ git clone https://github.com/ZhaoZeyu1995/asr_assignment.git
 source /opt/conda/etc/profile.d/conda.sh
 conda activate asr_env
 
-# Open the assignmente notebook
+# Open the assignment notebook
 cd asr_assignment
 jupyter notebook 
 ```
