@@ -5,7 +5,52 @@ from helper_functions import parse_lexicon, generate_symbol_tables
 lex = parse_lexicon('lexicon.txt')
 word_table, phone_table, state_table = generate_symbol_tables(lex)
 
-def generate_phone_wfst(f, start_state, phone, n):
+def generate_silence_wfst(f, start_state, n, self_loop_prob=0.1):
+    current_state = start_state
+    states = [start_state]
+
+    for i in range(1, n+1):
+        in_label = state_table.find('sil_{}'.format(i))
+
+        sl_weight = fst.Weight('log', -math.log(self_loop_prob))
+        f.add_arc(current_state, fst.Arc(in_label, 0, sl_weight, current_state))
+
+        next_state = f.add_state()
+        states.append(next_state)
+
+        if i == 2 or i == 4:
+            next_weight = fst.Weight('log', -math.log((1 - self_loop_prob) / 3))
+        elif i == 3:
+            next_weight = fst.Weight('log', -math.log((1 - self_loop_prob) / 2))
+        else:
+            next_weight = fst.Weight('log', -math.log(1 - self_loop_prob))
+
+        f.add_arc(current_state, fst.Arc(in_label, 0, next_weight, next_state))
+
+        current_state = next_state
+
+    f.set_final(current_state)
+    final_state = current_state
+
+    # Create ergodic loops
+    for i in range(2, 5):
+        current_state = states[i - 1]
+        for j in range(2, 5):
+            if j == i or j == i+1: 
+                continue
+            next_state = states[j-1]
+
+            in_label = state_table.find('sil_{}'.format(i))
+            if i == 2 or i == 4:
+                weight = fst.Weight('log', (1 - self_loop_prob) / 3)
+            else:
+                weight = fst.Weight('log', (1 - self_loop_prob) / 2)
+
+            f.add_arc(current_state, fst.Arc(in_label, 0, weight, next_state))
+
+    return final_state
+
+def generate_phone_wfst(f, start_state, phone, n, self_loop_prob=0.1):
     """
     Generate a WFST representing an n-state left-to-right phone HMM.
 
@@ -14,6 +59,7 @@ def generate_phone_wfst(f, start_state, phone, n):
         start_state (int): the index of the first state, assumed to exist already
         phone (str): the phone label
         n (int): number of states of the HMM excluding start and end
+        self_loop_prob (float): self loop probability
 
     Returns:
         the final state of the FST
@@ -25,8 +71,9 @@ def generate_phone_wfst(f, start_state, phone, n):
 
         in_label = state_table.find('{}_{}'.format(phone, i))
 
+        sl_weight = fst.Weight('log', -math.log(self_loop_prob))  # weight for self loop
         # self-loop back to current state
-        f.add_arc(current_state, fst.Arc(in_label, 0, None, current_state))
+        f.add_arc(current_state, fst.Arc(in_label, 0, sl_weight, current_state))
 
         # transition to next state
 
@@ -38,46 +85,12 @@ def generate_phone_wfst(f, start_state, phone, n):
             out_label = 0   # output empty <eps> label
 
         next_state = f.add_state()
-        f.add_arc(current_state, fst.Arc(in_label, out_label, None, next_state))
+        next_weight = fst.Weight('log', -math.log(1 - self_loop_prob))  # weight for next state
+        f.add_arc(current_state, fst.Arc(in_label, out_label, next_weight, next_state))
 
         current_state = next_state
     return current_state
 
-def generate_linear_phone_wfst(phone_list):
-
-    P = fst.Fst()
-
-    current_state = P.add_state()
-    P.set_start(current_state)
-
-    for p in phone_list:
-
-        next_state = P.add_state()
-        P.add_arc(current_state, fst.Arc(phone_table.find(p), phone_table.find(p), None, next_state))
-        current_state = next_state
-
-    P.set_final(current_state)
-    P.set_input_symbols(phone_table)
-    P.set_output_symbols(phone_table)
-    return P
-
-def generate_linear_word_wfst(word_list):
-
-    W = fst.Fst()
-
-    current_state = W.add_state()
-    W.set_start(current_state)
-
-    for w in word_list:
-
-        next_state = W.add_state()
-        W.add_arc(current_state, fst.Arc(word_table.find(w), word_table.find(w), None, next_state))
-        current_state = next_state
-
-    W.set_final(current_state)
-    W.set_input_symbols(word_table)
-    W.set_output_symbols(word_table)
-    return W
 
 def generate_L_wfst(lex):
     """ Express the lexicon in WFST form
@@ -89,7 +102,7 @@ def generate_L_wfst(lex):
         the constructed lexicon WFST
     
     """
-    L = fst.Fst()
+    L = fst.Fst('log')
     
     # create a single start state
     start_state = L.add_state()
@@ -104,21 +117,25 @@ def generate_L_wfst(lex):
             if i == len(pron)-1:
                 # add word output symbol on the final arc
                 L.add_arc(current_state, fst.Arc(phone_table.find(phone), \
-                                                 word_table.find(word), None, next_state))
+                                                 word_table.find(word), fst.Weight("log", 0.0), next_state))
             else:
-                L.add_arc(current_state, fst.Arc(phone_table.find(phone),0, None, next_state))
+
+                if i == 0:
+                    L.add_arc(current_state, fst.Arc(phone_table.find(phone), 0, fst.Weight("log", -math.log(1 / len(lex))), next_state))
+                else:
+                    L.add_arc(current_state, fst.Arc(phone_table.find(phone), 0, fst.Weight("log", 0.0), next_state))
             
             current_state = next_state
                           
         L.set_final(current_state)
-        L.add_arc(current_state, fst.Arc(0, 0, None, start_state))
+        L.add_arc(current_state, fst.Arc(0, 0, fst.Weight("log", 0.0), start_state))
         
     L.set_input_symbols(phone_table)
     L.set_output_symbols(word_table)                      
     
     return L
 
-def generate_G_wfst(wseq):
+def generate_G_wfst(wseq, unigram_probs=None):
     """ Generate a grammar WFST that accepts any sequence of words for words in a sentence.
         The bigrams not present in the sentence have a cost of 1, while those present have a cost of 0.
         Args:
@@ -126,7 +143,7 @@ def generate_G_wfst(wseq):
         Returns:
             W (fst.Fst()): the grammar WFST """
 
-    G = fst.Fst()
+    G = fst.Fst('log')
     start_state = G.add_state()
     G.set_start(start_state)
 
@@ -135,26 +152,27 @@ def generate_G_wfst(wseq):
     word_end_states = dict()
 
     bigrams = set(zip(wseq.split()[:-1], wseq.split()[1:]))
+    words = set(wseq.split())
     for w in set(wseq.split()):
         current_state = G.add_state()
         word_start_states[w] = current_state
 
-        weight = None if w == wseq.split()[0] else fst.Weight("tropical", 1.0)
+        weight = fst.Weight("log", -math.log(unigram_probs[w])) if unigram_probs else fst.Weight("log", -math.log(1 / len(words))) # if w == wseq.split()[0] else fst.Weight("log", 0.0)
         G.add_arc(start_state, fst.Arc(word_table.find("<eps>"), word_table.find("<eps>"), weight, current_state))
 
         prev_state = current_state
         current_state = G.add_state()
 
-        G.add_arc(prev_state, fst.Arc(word_table.find(w), word_table.find(w), None, current_state))
+        G.add_arc(prev_state, fst.Arc(word_table.find(w), word_table.find(w), fst.Weight("log", 0.0), current_state))
         G.set_final(current_state)
         word_end_states[w] = current_state
 
         for w2, w2_state in word_start_states.items():
-            weight = None if (w, w2) in bigrams else fst.Weight('tropical', 1.0)
+            weight = fst.Weight("log", -math.log(unigram_probs[w2])) if unigram_probs else fst.Weight("log", -math.log(1 / len(words))) # if (w, w2) in bigrams else fst.Weight('log', 1.0)
             G.add_arc(current_state, fst.Arc(word_table.find("<eps>"), word_table.find("<eps>"), weight, w2_state))
 
             if w != w2:
-                weight = None if (w2, w) in bigrams else fst.Weight('tropical', 1.0)
+                weight = fst.Weight("log", -math.log(unigram_probs[w])) if unigram_probs else fst.Weight("log", -math.log(1 / len(words))) # if (w2, w) in bigrams else fst.Weight('log', 1.0)
                 G.add_arc(
                     word_end_states[w2],
                     fst.Arc(
@@ -172,10 +190,10 @@ def generate_G_wfst(wseq):
 
     return G
 
-def generate_H_wfst():
+def generate_H_wfst(self_loop_prob):
     with open("phonelist.txt", "r") as f:
         phones = [phone.strip() for phone in f.readlines()]
-    H = fst.Fst()
+    H = fst.Fst('log')
 
     # create a single start state
     start_state = H.add_state()
@@ -186,11 +204,18 @@ def generate_H_wfst():
             continue
 
         current_state = H.add_state()
-        H.add_arc(start_state, fst.Arc(0, 0, None, current_state))
-        current_state = generate_phone_wfst(H, current_state, phone, 3)
+        H.add_arc(start_state, fst.Arc(0, 0, fst.Weight("log", -math.log(1 / (phone_table.num_symbols() + 1))), current_state))
+        current_state = generate_phone_wfst(H, current_state, phone, 3, self_loop_prob)
 
-        H.add_arc(current_state, fst.Arc(0, 0, None, start_state))
+        H.add_arc(current_state, fst.Arc(0, 0, fst.Weight("log", 0.0), start_state))
         H.set_final(current_state)
+
+    # current_state = H.add_state()
+    # H.add_arc(start_state, fst.Arc(0, 0, fst.Weight("log", -math.log(1 / (phone_table.num_symbols() + 1))), current_state))
+    # current_state = generate_silence_wfst(H, current_state, 5, self_loop_prob)
+
+    # H.add_arc(current_state, fst.Arc(0, 0, fst.Weight("log", 0.0), start_state))
+    # H.set_final(current_state)
 
     H.set_input_symbols(state_table)
     H.set_output_symbols(phone_table)

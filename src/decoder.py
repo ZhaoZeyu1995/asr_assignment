@@ -1,5 +1,6 @@
 import openfst_python as fst
 import math
+import observation_model
 from helper_functions import parse_lexicon, generate_symbol_tables
 
 class MyViterbiDecoder:
@@ -7,11 +8,12 @@ class MyViterbiDecoder:
     NLL_ZERO = 1e10  # define a constant representing -log(0).  This is really infinite, but approximate
                      # it here with a very large number
     
-    def __init__(self, f, audio_file_name):
+    def __init__(self, f, audio_file_name, prune_threshold=None):
         """Set up the decoder class with an audio file and WFST f
         """
         self.om = observation_model.ObservationModel()
         self.f = f
+        self.threshold = prune_threshold
         
         if audio_file_name:
             self.om.load_audio(audio_file_name)
@@ -31,10 +33,15 @@ class MyViterbiDecoder:
         self.W = []   # stores output labels sequence along arc reaching j - this removes need for 
                       # extra code to read the output sequence along the best path
         
+        self.active_states = []
+        
         for t in range(self.om.observation_length()+1):
+            self.active_states.append(set())
             self.V.append([self.NLL_ZERO]*self.f.num_states())
             self.B.append([-1]*self.f.num_states())
             self.W.append([[] for i in range(self.f.num_states())])  #  multiplying the empty list doesn't make multiple
+
+        self.active_states[0] = set(range(self.f.num_states()))
         
         # The above code means that self.V[t][j] for t = 0, ... T gives the Viterbi cost
         # of state j, time t (in negative log-likelihood form)
@@ -102,7 +109,34 @@ class MyViterbiDecoder:
 
     
     def forward_step(self, t):
-          
+        if self.threshold:
+            for state in self.active_states[t-1]:
+                if not self.V[t-1][state] == self.NLL_ZERO:   # no point in propagating states with zero probability
+                    for arc in self.f.arcs(state):
+                        
+                        if arc.ilabel != 0: # <eps> transitions don't emit an observation
+                            j = arc.nextstate
+                            tp = float(arc.weight)  # transition prob
+                            ep = -self.om.log_observation_probability(self.f.input_symbols().find(arc.ilabel), t)  # emission negative log prob
+                            prob = tp + ep + self.V[t-1][state] # they're logs
+                            if prob < self.V[t][j]:
+                                self.V[t][j] = prob
+                                self.B[t][j] = state
+                                
+                                # store the output labels encountered too
+                                if arc.olabel !=0:
+                                    self.W[t][j] = [arc.olabel]
+                                else:
+                                    self.W[t][j] = []
+            
+            best_prob = min(self.V[t])
+            for i in self.f.states():
+                if self.V[t][i] <= best_prob + math.log(self.threshold):
+                    self.active_states[t].add(i)
+            
+            return
+
+
         for i in self.f.states():
             
             if not self.V[t-1][i] == self.NLL_ZERO:   # no point in propagating states with zero probability
@@ -128,9 +162,10 @@ class MyViterbiDecoder:
     def finalise_decoding(self):
         """ this incorporates the probability of terminating at each state
         """
-        
+
         for state in self.f.states():
             final_weight = float(self.f.final(state))
+
             if self.V[-1][state] != self.NLL_ZERO:
                 if final_weight == math.inf:
                     self.V[-1][state] = self.NLL_ZERO  # effectively says that we can't end in this state

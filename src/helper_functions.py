@@ -51,5 +51,9 @@ def generate_symbol_tables(lexicon, n=3):
             phone_table.add_symbol(p)
             for i in range(1,n+1): # for each state 1 to n
                 state_table.add_symbol('{}_{}'.format(p, i))
+
+    # Add silence states
+    for i in range(1, 6):
+        state_table.add_symbol(f'sil_{i}')
             
     return word_table, phone_table, state_table
